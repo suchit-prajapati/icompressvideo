@@ -73,6 +73,7 @@
 
       const processVideo = async (action) => {
         if (!file) {
+          setError('Please upload a video first');
           speak('Please upload a video first');
           return;
         }
@@ -100,9 +101,34 @@
             speak('Processing failed');
           }
         } catch (err) {
-          setError('Failed to connect to the server');
+          setError('Failed to connect to the server: ' + err.message);
           setProgress(0);
           speak('Failed to connect to the server');
+        }
+      };
+
+      const handleDownload = async (url) => {
+        try {
+          speak('Downloading processed video');
+          const response = await fetch(`http://localhost:5000/download?url=${encodeURIComponent(url)}`);
+          if (!response.ok) {
+            throw new Error('Failed to fetch video from backend');
+          }
+
+          const blob = await response.blob();
+          const downloadUrl = window.URL.createObjectURL(blob);
+          
+          const link = document.createElement('a');
+          link.href = downloadUrl;
+          link.download = `processed-video-${Date.now()}.mp4`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          window.URL.revokeObjectURL(downloadUrl);
+        } catch (error) {
+          setError('Failed to download video: ' + error.message);
+          speak('Failed to download video');
         }
       };
 
@@ -222,14 +248,21 @@
           )}
 
           {downloadUrl && (
-            <div className="mb-6 text-center">
+            <div className="mb-6 text-center flex gap-4 justify-center">
+              <button
+                className="bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 transition-colors font-semibold"
+                onClick={() => handleDownload(downloadUrl)}
+              >
+                Download Processed Video
+              </button>
               <a
                 href={downloadUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 transition-colors font-semibold"
+                className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors font-semibold"
+                onClick={() => speak('Playing processed video')}
               >
-                Download Processed Video
+                Play Processed Video
               </a>
             </div>
           )}

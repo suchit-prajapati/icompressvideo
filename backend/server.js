@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors'); // Add CORS
@@ -68,16 +69,29 @@ app.get('/', (req, res) => {
 
 // Upload file to R2
 const uploadToR2 = async (filePath, fileName) => {
-  const fileStream = fs.createReadStream(filePath);
-  const uploadParams = {
-    Bucket: process.env.R2_BUCKET_NAME,
-    Key: fileName,
-    Body: fileStream,
-    ContentType: 'video/mp4',
-  };
+  try {
+    const fileStream = fs.createReadStream(filePath);
+    const uploadParams = {
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: fileName,
+      Body: fileStream,
+      ContentType: 'video/mp4',
+    };
 
-  await s3Client.send(new PutObjectCommand(uploadParams));
-  return `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET_NAME}/${fileName}`;
+    await s3Client.send(new PutObjectCommand(uploadParams));
+    console.log('R2 Upload Success:', fileName);
+
+    // Generate a presigned URL for downloading (valid for 1 hour)
+    const command = new GetObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: fileName,
+    });
+    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    return signedUrl;
+  } catch (error) {
+    console.error('R2 Upload Failed:', error);
+    throw new Error('Failed to upload to R2: ' + error.message);
+  }
 };
 
 // Endpoint to upload and process video
