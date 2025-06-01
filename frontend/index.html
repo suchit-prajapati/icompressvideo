@@ -21,6 +21,7 @@
       const [template, setTemplate] = useState('default');
       const [largeText, setLargeText] = useState(false);
       const [error, setError] = useState('');
+      const [downloadUrl, setDownloadUrl] = useState('');
 
       const speak = (text) => {
         setTimeout(() => {
@@ -56,7 +57,7 @@
         const selectedFile = e.target.files[0];
         if (selectedFile) {
           if (selectedFile.type.startsWith('video/')) {
-            if (selectedFile.size <= 500 * 1024 * 1024) { // Fixed: changed droppedFile to selectedFile
+            if (selectedFile.size <= 500 * 1024 * 1024) {
               setFile(selectedFile);
               speak('Video uploaded successfully');
             } else {
@@ -70,26 +71,46 @@
         }
       };
 
-      useEffect(() => {
-        if (file && progress > 0 && progress < 100) {
-          const timer = setInterval(() => {
-            setProgress((prev) => {
-              if (prev >= 100) {
-                clearInterval(timer);
-                speak('Processing complete');
-                return 100;
-              }
-              return prev + 10;
-            });
-          }, 500);
-          return () => clearInterval(timer);
+      const processVideo = async (action) => {
+        if (!file) {
+          speak('Please upload a video first');
+          return;
         }
-      }, [file, progress]);
+
+        setProgress(10);
+        speak(`Starting ${action}`);
+
+        const formData = new FormData();
+        formData.append('video', file);
+
+        try {
+          const response = await fetch(`http://localhost:5000/upload?action=${action}`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          const data = await response.json();
+          if (data.success) {
+            setProgress(100);
+            setDownloadUrl(data.url);
+            speak('Processing complete. Download link available.');
+          } else {
+            setError(data.error || 'Processing failed');
+            setProgress(0);
+            speak('Processing failed');
+          }
+        } catch (err) {
+          setError('Failed to connect to the server');
+          setProgress(0);
+          speak('Failed to connect to the server');
+        }
+      };
 
       useEffect(() => {
         if (!file) {
           setProgress(0);
           setError('');
+          setDownloadUrl('');
         }
       }, [file]);
 
@@ -169,43 +190,22 @@
 
           <div className="flex gap-4 mb-6 justify-center">
             <button
-              className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors font-semibold"
-              onClick={() => {
-                if (file) {
-                  setProgress(10);
-                  speak('Starting compression');
-                } else {
-                  speak('Please upload a video first');
-                }
-              }}
+              className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-50 transition-colors font-semibold"
+              onClick={() => processVideo('compress')}
               disabled={!!error}
             >
               Compress
             </button>
             <button
-              className="bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 disabled:bg-gray-400 transition-colors font-semibold"
-              onClick={() => {
-                if (file) {
-                  setProgress(10);
-                  speak('Starting conversion');
-                } else {
-                  speak('Please upload a video first');
-                }
-              }}
+              className="bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-50 transition-colors font-semibold"
+              onClick={() => processVideo('convert')}
               disabled={!!error}
             >
               Convert
             </button>
             <button
-              className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 disabled:bg-gray-400 transition-colors font-semibold" // Fixed: corrected hover:bg-blue-600 to hover:bg-purple-600
-              onClick={() => {
-                if (file) {
-                  setProgress(10);
-                  speak('Starting trimming');
-                } else {
-                  speak('Please upload a video first');
-                }
-              }}
+              className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-50 transition-colors font-semibold"
+              onClick={() => processVideo('trim')}
               disabled={!!error}
             >
               Trim
@@ -218,6 +218,19 @@
                 className="bg-blue-500 h-4 rounded-full transition-all duration-500"
                 style={{ width: `${progress}%` }}
               ></div>
+            </div>
+          )}
+
+          {downloadUrl && (
+            <div className="mb-6 text-center">
+              <a
+                href={downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 transition-colors font-semibold"
+              >
+                Download Processed Video
+              </a>
             </div>
           )}
 
