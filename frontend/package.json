@@ -3,17 +3,24 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "serve --no-etag",
     "build:css": "tailwindcss -i ./input.css -o ./output.css --minify",
-    "watch:css": "tailwindcss -i ./input.css -o ./output.css --watch"
+    "watch:css": "tailwindcss -i ./input.css -o ./output.css --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["video compression", "frontend", "react", "tailwindcss"],
+  "author": "Praja",
   "license": "ISC",
-  "description": "",
+  "description": "Frontend for iCompressVideo, a tool for compressing, converting, and trimming videos with a kid-friendly and accessible UI.",
   "devDependencies": {
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.4",
-    "tailwindcss": "^3.4.1"
-  }
+    "tailwindcss": "^3.4.1",
+    "serve": "^14.2.4"
+  },
+  "browserslist": [
+    "> 0.5%",
+    "last 2 versions",
+    "not dead"
+  ]
 }
