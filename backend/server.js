@@ -12,7 +12,7 @@ const app = express();
 
 // Enable CORS
 app.use(cors({
-  origin: '64.227.183.31', // Allow requests from frontend
+  origin: ['64.227.183.31', 'http://localhost:3000'], // Allow requests from frontend
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
