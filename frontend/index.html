@@ -85,7 +85,7 @@
         formData.append('video', file);
 
         try {
-          const response = await fetch(`http://localhost:5000/upload?action=${action}`, {
+          const response = await fetch(`/api/upload?action=${action}`, {
             method: 'POST',
             body: formData,
           });
@@ -110,7 +110,7 @@
       const handleDownload = async (url) => {
         try {
           speak('Downloading processed video');
-          const response = await fetch(`http://localhost:5000/download?url=${encodeURIComponent(url)}`);
+          const response = await fetch(`/api/download?url=${encodeURIComponent(url)}`);
           if (!response.ok) {
             throw new Error('Failed to fetch video from backend');
           }
