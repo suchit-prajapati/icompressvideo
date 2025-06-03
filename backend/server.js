@@ -5,14 +5,25 @@ const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/clien
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const path = require('path');
 const fs = require('fs');
-const cors = require('cors'); // Add CORS
+const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
 
+// Global error handlers to prevent crashes
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
 // Enable CORS
 app.use(cors({
-  origin: ['64.227.183.31', 'http://localhost:3000'], // Allow requests from frontend
+  origin: ['http://64.227.183.31', 'http://localhost:3000'], // Add http:// prefix
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
@@ -41,16 +52,36 @@ const storage = multer.diskStorage({
   },
 });
 
+const fileFilter = (req, file, cb) => {
+  console.log('File MIME type:', file.mimetype);
+  const ext = path.extname(file.originalname).toLowerCase();
+  console.log('File extension:', ext);
+  if (
+    file.mimetype.startsWith('video/') ||
+    ext === '.mp4' ||
+    ext === '.avi' ||
+    ext === '.mov'
+  ) {
+    cb(null, true);
+  } else {
+    cb(new Error('Please upload a valid video file (MP4, AVI, MOV)'), false);
+  }
+};
+
 const upload = multer({
   storage,
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('video/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Please upload a valid video file (MP4, AVI, MOV)'));
-    }
-  },
+  fileFilter,
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
+});
+
+// Multer error handling middleware
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: err.message });
+  } else if (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  next();
 });
 
 // Serve static files (for processed videos)
@@ -62,7 +93,7 @@ if (!fs.existsSync(processedDir)) {
   fs.mkdirSync(processedDir);
 }
 
-// Add a root route for GET /
+// Root route for GET /
 app.get('/', (req, res) => {
   res.status(200).json({ message: 'iCompressVideo Backend is running!', status: 'OK', timestamp: new Date().toISOString() });
 });
@@ -81,7 +112,6 @@ const uploadToR2 = async (filePath, fileName) => {
     await s3Client.send(new PutObjectCommand(uploadParams));
     console.log('R2 Upload Success:', fileName);
 
-    // Generate a presigned URL for downloading (valid for 1 hour)
     const command = new GetObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
       Key: fileName,
@@ -105,7 +135,6 @@ app.post('/upload', upload.single('video'), async (req, res) => {
     const outputFileName = `${Date.now()}-processed.mp4`;
     const outputPath = path.join(processedDir, outputFileName);
 
-    // Determine action (compress, convert, trim) from query params
     const action = req.query.action || 'compress';
     const ffmpegCommand = ffmpeg(inputPath);
 
@@ -130,18 +159,20 @@ app.post('/upload', upload.single('video'), async (req, res) => {
         .audioCodec('aac');
     }
 
-    // Process the video
     ffmpegCommand
       .output(outputPath)
       .on('end', async () => {
-        // Upload processed video to R2
-        const r2Url = await uploadToR2(outputPath, outputFileName);
-
-        // Clean up local files
-        fs.unlinkSync(inputPath);
-        fs.unlinkSync(outputPath);
-
-        res.json({ success: true, url: r2Url });
+        try {
+          const r2Url = await uploadToR2(outputPath, outputFileName);
+          fs.unlinkSync(inputPath);
+          fs.unlinkSync(outputPath);
+          res.json({ success: true, url: r2Url });
+        } catch (error) {
+          console.error('Post-FFmpeg error:', error);
+          fs.unlinkSync(inputPath);
+          fs.unlinkSync(outputPath);
+          res.status(500).json({ error: 'Failed to upload processed video to R2' });
+        }
       })
       .on('error', (err) => {
         console.error('FFmpeg error:', err);
@@ -151,7 +182,32 @@ app.post('/upload', upload.single('video'), async (req, res) => {
       .run();
   } catch (error) {
     console.error('Upload error:', error);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint to serve processed videos (optional, for direct download)
+app.get('/download', async (req, res) => {
+  const url = req.query.url;
+  if (!url) {
+    return res.status(400).json({ error: 'No URL provided' });
+  }
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('Failed to fetch video from R2');
+    }
+
+    res.setHeader('Content-Disposition', 'attachment; filename="processed-video.mp4"');
+    res.setHeader('Content-Type', 'video/mp4');
+    response.body.pipe(res);
+  } catch (error) {
+    console.error('Download error:', error);
+    res.status(500).json({ error: 'Failed to download video' });
   }
 });
 
