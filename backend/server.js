@@ -8,27 +8,45 @@ const fs = require('fs');
 const cors = require('cors');
 require('dotenv').config();
 
+// Create Express App
 const app = express();
 
-// Global error handlers to prevent crashes
+// Create HTTP server manually
+const http = require('http');
+const server = http.createServer(app);
+
+// Attach Socket.IO to server
+const { Server } = require('socket.io');
+const io = new Server(server, {
+  cors: {
+    origin: ['http://64.227.183.31', 'http://localhost:3000'],
+    methods: ['GET', 'POST']
+  }
+});
+
+// Handle Socket.IO connections
+io.on('connection', (socket) => {
+  console.log('Client connected');
+  socket.on('disconnect', () => console.log('Client disconnected'));
+});
+
+// Global error handlers
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
-  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
 });
 
 // Enable CORS
 app.use(cors({
-  origin: ['http://64.227.183.31', 'http://localhost:3000'], // Add http:// prefix
+  origin: ['http://64.227.183.31', 'http://localhost:3000'],
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
 
-// Configure Cloudflare R2 (using AWS SDK)
+// Cloudflare R2 S3 Client Setup
 const s3Client = new S3Client({
   region: 'auto',
   endpoint: process.env.R2_ENDPOINT,
@@ -38,7 +56,7 @@ const s3Client = new S3Client({
   },
 });
 
-// Configure Multer for file uploads
+// Multer Setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = 'uploads/';
@@ -53,9 +71,7 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  console.log('File MIME type:', file.mimetype);
   const ext = path.extname(file.originalname).toLowerCase();
-  console.log('File extension:', ext);
   if (
     file.mimetype.startsWith('video/') ||
     ext === '.mp4' ||
@@ -71,34 +87,28 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
+  limits: { fileSize: 500 * 1024 * 1024 },
 });
 
-// Multer error handling middleware
 app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(400).json({ error: err.message });
-  } else if (err) {
-    return res.status(400).json({ error: err.message });
+  if (err instanceof multer.MulterError || err) {
+    return res.status(400).json({ success: false, error: err.message });
   }
   next();
 });
 
-// Serve static files (for processed videos)
-app.use('/processed', express.static(path.join(__dirname, 'processed')));
-
-// Create processed directory if it doesn't exist
+// Ensure processed directory exists
 const processedDir = path.join(__dirname, 'processed');
 if (!fs.existsSync(processedDir)) {
   fs.mkdirSync(processedDir);
 }
 
-// Root route for GET /
+// Root route
 app.get('/', (req, res) => {
   res.status(200).json({ message: 'iCompressVideo Backend is running!', status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Upload file to R2
+// Upload to R2
 const uploadToR2 = async (filePath, fileName) => {
   try {
     const fileStream = fs.createReadStream(filePath);
@@ -109,31 +119,29 @@ const uploadToR2 = async (filePath, fileName) => {
       ContentType: 'video/mp4',
     };
 
+    console.log('Uploading to R2:', fileName);
     await s3Client.send(new PutObjectCommand(uploadParams));
-    console.log('R2 Upload Success:', fileName);
-
-    const command = new GetObjectCommand({
-      Bucket: process.env.R2_BUCKET_NAME,
-      Key: fileName,
-    });
+    const command = new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: fileName });
     const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    console.log('R2 Upload Successful:', signedUrl);
     return signedUrl;
   } catch (error) {
-    console.error('R2 Upload Failed:', error);
-    throw new Error('Failed to upload to R2: ' + error.message);
+    console.error('R2 Upload Failed:', error.message);
+    throw error;
   }
 };
 
-// Endpoint to upload and process video
-app.post('/upload', upload.single('video'), async (req, res) => {
+// Upload endpoint with FFmpeg + progress emit
+app.post('/api/upload', upload.single('video'), async (req, res) => {
+  let outputPath; // Declare outputPath outside try block for cleanup
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No video file uploaded' });
+      return res.status(400).json({ success: false, error: 'No video file uploaded' });
     }
 
     const inputPath = req.file.path;
     const outputFileName = `${Date.now()}-processed.mp4`;
-    const outputPath = path.join(processedDir, outputFileName);
+    outputPath = path.join(processedDir, outputFileName);
 
     const action = req.query.action || 'compress';
     const ffmpegCommand = ffmpeg(inputPath);
@@ -159,53 +167,68 @@ app.post('/upload', upload.single('video'), async (req, res) => {
         .audioCodec('aac');
     }
 
-    ffmpegCommand
-      .output(outputPath)
-      .on('end', async () => {
-        try {
-          const r2Url = await uploadToR2(outputPath, outputFileName);
-          fs.unlinkSync(inputPath);
-          fs.unlinkSync(outputPath);
-          res.json({ success: true, url: r2Url });
-        } catch (error) {
-          console.error('Post-FFmpeg error:', error);
-          fs.unlinkSync(inputPath);
-          fs.unlinkSync(outputPath);
-          res.status(500).json({ error: 'Failed to upload processed video to R2' });
-        }
-      })
-      .on('error', (err) => {
-        console.error('FFmpeg error:', err);
-        fs.unlinkSync(inputPath);
-        res.status(500).json({ error: 'Video processing failed' });
-      })
-      .run();
+    // Promisify FFmpeg
+    await new Promise((resolve, reject) => {
+      ffmpegCommand
+        .on('progress', (progress) => {
+          const percentage = progress.percent || 0;
+          io.emit('progress', { percentage: Math.min(Math.max(percentage, 0), 100) });
+        })
+        .on('end', () => resolve())
+        .on('error', (err) => reject(new Error('Video processing failed: ' + err.message)))
+        .output(outputPath)
+        .run();
+    });
+
+    // Upload to R2
+    const r2Url = await uploadToR2(outputPath, outputFileName);
+    if (!r2Url) {
+      throw new Error('Failed to upload processed video to R2');
+    }
+
+    // Clean up files
+    fs.unlinkSync(inputPath);
+    fs.unlinkSync(outputPath);
+
+    res.json({ success: true, url: r2Url });
   } catch (error) {
-    console.error('Upload error:', error);
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    res.status(500).json({ error: error.message });
+    if (outputPath && fs.existsSync(outputPath)) {
+      fs.unlinkSync(outputPath);
+    }
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Endpoint to serve processed videos (optional, for direct download)
+// Direct download by streaming from R2
 app.get('/download', async (req, res) => {
-  const url = req.query.url;
-  if (!url) {
-    return res.status(400).json({ error: 'No URL provided' });
-  }
-
   try {
-    // Redirect the client directly to the presigned URL
-    res.redirect(url);
+    const url = req.query.url;
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'No URL provided' });
+    }
+
+    // Fetch the video from R2 URL
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('Failed to fetch video from R2');
+    }
+
+    // Set headers for video download
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `attachment; filename="processed-video-${Date.now()}.mp4"`);
+
+    // Stream the video to the client
+    response.body.pipe(res);
   } catch (error) {
-    console.error('Download error:', error);
-    res.status(500).json({ error: 'Failed to download video: ' + error.message });
+    res.status(500).json({ success: false, error: 'Failed to download video: ' + error.message });
   }
 });
 
+// Start HTTP + Socket.IO server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Server + Socket.IO running on port ${PORT}`);
 });
