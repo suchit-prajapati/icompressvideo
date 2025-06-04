@@ -133,7 +133,7 @@ const uploadToR2 = async (filePath, fileName) => {
 
 // Upload endpoint with FFmpeg + progress emit
 app.post('/api/upload', upload.single('video'), async (req, res) => {
-  let outputPath; // Declare outputPath outside try block for cleanup
+  let outputPath;
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No video file uploaded' });
@@ -144,7 +144,7 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
     outputPath = path.join(processedDir, outputFileName);
 
     const action = req.query.action || 'compress';
-    const ffmpegCommand = ffmpeg(inputPath);
+    const ffmpegCommand = ffmpeg(inputPath).outputOptions('-progress pipe:2');
 
     if (action === 'compress') {
       ffmpegCommand
@@ -172,10 +172,17 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
       ffmpegCommand
         .on('progress', (progress) => {
           const percentage = progress.percent || 0;
+          console.log('FFmpeg Progress:', percentage);
           io.emit('progress', { percentage: Math.min(Math.max(percentage, 0), 100) });
         })
-        .on('end', () => resolve())
-        .on('error', (err) => reject(new Error('Video processing failed: ' + err.message)))
+        .on('end', () => {
+          console.log('FFmpeg Processing Complete');
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('FFmpeg Error:', err.message);
+          reject(new Error('Video processing failed: ' + err.message));
+        })
         .output(outputPath)
         .run();
     });
@@ -199,31 +206,6 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
       fs.unlinkSync(outputPath);
     }
     res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Direct download by streaming from R2
-app.get('/download', async (req, res) => {
-  try {
-    const url = req.query.url;
-    if (!url) {
-      return res.status(400).json({ success: false, error: 'No URL provided' });
-    }
-
-    // Fetch the video from R2 URL
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error('Failed to fetch video from R2');
-    }
-
-    // Set headers for video download
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Disposition', `attachment; filename="processed-video-${Date.now()}.mp4"`);
-
-    // Stream the video to the client
-    response.body.pipe(res);
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to download video: ' + error.message });
   }
 });
 

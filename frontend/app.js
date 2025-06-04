@@ -10,18 +10,17 @@ function App() {
   const [largeText, setLargeText] = useState(false);
   const [error, setError] = useState('');
   const [downloadUrl, setDownloadUrl] = useState('');
+  const [statusText, setStatusText] = useState('');
 
-  // Initialize WebSocket connection
-  const socket = io('http://64.227.183.31:5000');
+  const socket = io('http://64.227.183.31', { path: '/socket.io' });
 
-  // Listen for progress updates from the backend
   useEffect(() => {
     socket.on('connect', () => {
       console.log('Connected to WebSocket server');
     });
 
     socket.on('progress', (data) => {
-      console.log('Progress:', data.percentage);
+      console.log('Progress Event:', data.percentage); // Debug log
       const percentage = Math.min(Math.max(data.percentage, 0), 100);
       setProgress(percentage);
     });
@@ -37,14 +36,6 @@ function App() {
     };
   }, [socket]);
 
-  const speak = (text) => {
-    setTimeout(() => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      window.speechSynthesis.speak(utterance);
-    }, 500);
-  };
-
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
@@ -54,14 +45,14 @@ function App() {
       if (droppedFile.type.startsWith('video/')) {
         if (droppedFile.size <= 500 * 1024 * 1024) {
           setFile(droppedFile);
-          speak('Video uploaded successfully');
+          setStatusText('Video uploaded successfully.');
         } else {
           setError('File size exceeds 500MB limit');
-          speak('File size exceeds 500MB limit');
+          setStatusText('Upload failed: file too large.');
         }
       } else {
         setError('Please upload a valid video file (MP4, AVI, MOV)');
-        speak('Please upload a valid video file');
+        setStatusText('Upload failed: invalid video type.');
       }
     }
   };
@@ -73,14 +64,14 @@ function App() {
       if (selectedFile.type.startsWith('video/')) {
         if (selectedFile.size <= 500 * 1024 * 1024) {
           setFile(selectedFile);
-          speak('Video uploaded successfully');
+          setStatusText('Video uploaded successfully.');
         } else {
           setError('File size exceeds 500MB limit');
-          speak('File size exceeds 500MB limit');
+          setStatusText('Upload failed: file too large.');
         }
       } else {
         setError('Please upload a valid video file (MP4, AVI, MOV)');
-        speak('Please upload a valid video file');
+        setStatusText('Upload failed: invalid video type.');
       }
     }
   };
@@ -88,12 +79,12 @@ function App() {
   const processVideo = async (action) => {
     if (!file) {
       setError('Please upload a video first');
-      speak('Please upload a video first');
+      setStatusText('No video uploaded.');
       return;
     }
 
     setProgress(0);
-    speak(`Starting ${action}`);
+    setStatusText(`Processing started: ${action}`);
 
     const formData = new FormData();
     formData.append('video', file);
@@ -104,45 +95,49 @@ function App() {
         body: formData,
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Processing failed');
+      }
+
       const data = await response.json();
       if (data.success) {
         setProgress(100);
         setDownloadUrl(data.url);
-        speak('Processing complete. Download link available.');
+        setStatusText('Processing complete. Ready for download.');
       } else {
         setError(data.error || 'Processing failed');
         setProgress(0);
-        speak('Processing failed');
+        setStatusText('Processing failed.');
       }
     } catch (err) {
-      setError('Failed to connect to the server: ' + err.message);
+      setError('Failed to process video: ' + err.message);
       setProgress(0);
-      speak('Failed to connect to the server');
+      setStatusText('Server connection failed: ' + err.message);
     }
   };
 
   const handleDownload = async (url) => {
     try {
-      speak('Downloading processed video');
-      const response = await fetch(`/api/download?url=${encodeURIComponent(url)}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch video from backend');
-      }
+      setStatusText('Downloading...');
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch video from R2');
 
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
-      
+
       const link = document.createElement('a');
       link.href = downloadUrl;
       link.download = `processed-video-${Date.now()}.mp4`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
       window.URL.revokeObjectURL(downloadUrl);
+
+      setStatusText('Download complete.');
     } catch (error) {
       setError('Failed to download video: ' + error.message);
-      speak('Failed to download video');
+      setStatusText('Download failed.');
     }
   };
 
@@ -151,6 +146,7 @@ function App() {
       setProgress(0);
       setError('');
       setDownloadUrl('');
+      setStatusText('');
     }
   }, [file]);
 
@@ -173,9 +169,7 @@ function App() {
         largeText ? 'text-2xl' : 'text-base'
       } ${templateStyles[template]}`}
     >
-      <h1 className="text-4xl font-bold mb-6 text-center text-gray-800">
-        iCompressVideo
-      </h1>
+      <h1 className="text-4xl font-bold mb-6 text-center text-gray-800">iCompressVideo</h1>
 
       <div
         className={`border-4 border-dashed p-8 mb-6 rounded-lg text-center w-full max-w-md transition-colors duration-300 ${
@@ -202,9 +196,7 @@ function App() {
         <p className="mt-2 text-gray-500">{file ? file.name : 'No file chosen'}</p>
       </div>
 
-      {error && (
-        <p className="text-red-500 mb-6 font-medium">{error}</p>
-      )}
+      {error && <p className="text-red-500 mb-6 font-medium">{error}</p>}
 
       {file && !error && (
         <p className="mb-6 text-gray-700">
@@ -219,7 +211,7 @@ function App() {
           value={template}
           onChange={(e) => {
             setTemplate(e.target.value);
-            speak(`Selected ${e.target.value} template`);
+            setStatusText(`Template selected: ${e.target.value}`);
           }}
         >
           <option value="default">Default</option>
@@ -230,21 +222,21 @@ function App() {
 
       <div className="flex gap-4 mb-6 justify-center">
         <button
-          className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-50 transition-colors font-semibold"
+          className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors font-semibold"
           onClick={() => processVideo('compress')}
           disabled={!!error}
         >
           Compress
         </button>
         <button
-          className="bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-50 transition-colors font-semibold"
+          className="bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 disabled:bg-gray-400 transition-colors font-semibold"
           onClick={() => processVideo('convert')}
           disabled={!!error}
         >
           Convert
         </button>
         <button
-          className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-50 transition-colors font-semibold"
+          className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 disabled:bg-gray-400 transition-colors font-semibold"
           onClick={() => processVideo('trim')}
           disabled={!!error}
         >
@@ -276,7 +268,6 @@ function App() {
             target="_blank"
             rel="noopener noreferrer"
             className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors font-semibold"
-            onClick={() => speak('Playing processed video')}
           >
             Play Processed Video
           </a>
@@ -288,12 +279,16 @@ function App() {
           className="bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 transition-colors font-semibold"
           onClick={() => {
             setLargeText(!largeText);
-            speak(largeText ? 'Normal text enabled' : 'Large text enabled');
+            setStatusText(largeText ? 'Switched to normal text.' : 'Switched to large text.');
           }}
         >
           {largeText ? 'Normal Text' : 'Large Text'}
         </button>
       </div>
+
+      {statusText && (
+        <p className="mt-4 text-blue-600 text-center font-medium">{statusText}</p>
+      )}
     </div>
   );
 }
