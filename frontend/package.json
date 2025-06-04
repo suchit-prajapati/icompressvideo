@@ -3,24 +3,37 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "build": "esbuild app.js --bundle --outfile=dist/bundle.js --loader:.js=jsx --define:process.env.NODE_ENV=\\\"production\\\"",
+    "dev": "esbuild app.js --bundle --outfile=dist/bundle.js --loader:.js=jsx --watch",
     "start": "serve --no-etag",
     "build:css": "tailwindcss -i ./input.css -o ./output.css --minify",
     "watch:css": "tailwindcss -i ./input.css -o ./output.css --watch",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["video compression", "frontend", "react", "tailwindcss"],
+  "keywords": [
+    "video compression",
+    "frontend",
+    "react",
+    "tailwindcss"
+  ],
   "author": "Praja",
   "license": "ISC",
   "description": "Frontend for iCompressVideo, a tool for compressing, converting, and trimming videos with a kid-friendly and accessible UI.",
   "devDependencies": {
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.4",
-    "tailwindcss": "^3.4.1",
-    "serve": "^14.2.4"
+    "serve": "^14.2.4",
+    "tailwindcss": "^3.4.17"
   },
   "browserslist": [
     "> 0.5%",
     "last 2 versions",
     "not dead"
-  ]
+  ],
+  "dependencies": {
+    "esbuild": "^0.25.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "socket.io-client": "^4.8.1"
+  }
 }
