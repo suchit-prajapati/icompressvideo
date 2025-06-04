@@ -197,17 +197,11 @@ app.get('/download', async (req, res) => {
   }
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error('Failed to fetch video from R2');
-    }
-
-    res.setHeader('Content-Disposition', 'attachment; filename="processed-video.mp4"');
-    res.setHeader('Content-Type', 'video/mp4');
-    response.body.pipe(res);
+    // Redirect the client directly to the presigned URL
+    res.redirect(url);
   } catch (error) {
     console.error('Download error:', error);
-    res.status(500).json({ error: 'Failed to download video' });
+    res.status(500).json({ error: 'Failed to download video: ' + error.message });
   }
 });
 
